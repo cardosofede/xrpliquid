@@ -24,15 +24,27 @@ interface Trade {
 export async function GET() {
   try {
     console.log('Fetching dashboard stats...')
+    console.log('MongoDB configuration:', {
+      URI: MONGODB.URI,
+      DB_NAME: MONGODB.DB_NAME,
+      DEFAULT_LIMIT: MONGODB.DEFAULT_LIMIT
+    })
     
-    // Get users count
-    console.log('Fetching users...')
+    // Get users count directly with count operation
+    console.log('Counting users...')
+    const userCount = await runQuery({
+      collection: 'users',
+      operation: 'count'
+    }) as number;
+    console.log(`User count: ${userCount}`)
+    
+    // For wallets, first get all users
+    console.log('Fetching users for wallet counting...')
     const users = await runQuery({
       collection: 'users',
       operation: 'find'
     }) as User[];
-    const userCount = users.length
-    console.log(`Retrieved ${userCount} users`)
+    console.log(`Retrieved ${users.length} users for wallet processing`)
     
     // Count unique wallets
     const uniqueWallets = new Set<string>()
@@ -44,15 +56,13 @@ export async function GET() {
     const walletCount = uniqueWallets.size
     console.log(`Found ${walletCount} unique wallets`)
     
-    // Get transactions
-    console.log('Fetching transactions...')
-    const transactions = await runQuery({
+    // Get transaction count directly
+    console.log('Counting transactions...')
+    const transactionCount = await runQuery({
       collection: 'transactions',
-      operation: 'find',
-      limit: MONGODB.DEFAULT_LIMIT
-    })
-    const transactionCount = transactions.length
-    console.log(`Retrieved ${transactionCount} transactions`)
+      operation: 'count'
+    }) as number;
+    console.log(`Transaction count: ${transactionCount}`)
     
     // Get trades for volume calculation
     console.log('Fetching trades...')
