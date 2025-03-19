@@ -1,10 +1,13 @@
 import { NextResponse } from 'next/server'
 import { MONGODB } from '@/lib/config'
-import { withMongoDB } from '@/app/api/_serverUtils'
+import { initializeMongoDB } from '@/app/api/_serverUtils'
 
 // Handler for GET requests
-async function handleGET(request: Request) {
+export async function GET(request: Request) {
   try {
+    // Initialize MongoDB first
+    await initializeMongoDB();
+    
     console.log('Fetching transactions...')
     const { searchParams } = new URL(request.url)
     
@@ -56,8 +59,11 @@ async function handleGET(request: Request) {
 }
 
 // Handler for POST requests
-async function handlePOST(request: Request) {
+export async function POST(request: Request) {
   try {
+    // Initialize MongoDB first
+    await initializeMongoDB();
+    
     const body = await request.json()
     console.log('Creating new transaction:', body)
     
@@ -113,8 +119,4 @@ async function handlePOST(request: Request) {
       error: `Failed to create transaction: ${error instanceof Error ? error.message : 'Unknown error'}`
     }, { status: 500 })
   }
-}
-
-// Export handlers with MongoDB initialization
-export const GET = withMongoDB(handleGET)
-export const POST = withMongoDB(handlePOST) 
+} 

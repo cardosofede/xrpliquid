@@ -1,10 +1,13 @@
 import { NextResponse } from 'next/server'
 import { MONGODB } from '@/lib/config'
-import { withMongoDB } from '@/app/api/_serverUtils'
+import { initializeMongoDB } from '@/app/api/_serverUtils'
 
 // Handler for GET requests
-async function handleGET() {
+export async function GET() {
   try {
+    // Initialize MongoDB first
+    await initializeMongoDB();
+    
     console.log('Fetching transaction date range...')
     
     // Import the db module here to ensure it's only loaded on the server
@@ -64,7 +67,4 @@ async function handleGET() {
       error: `Failed to fetch transaction date range: ${error instanceof Error ? error.message : 'Unknown error'}` 
     }, { status: 500 })
   }
-}
-
-// Export the handler with MongoDB initialization
-export const GET = withMongoDB(handleGET) 
+} 

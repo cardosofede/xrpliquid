@@ -1,12 +1,15 @@
 import { NextResponse } from 'next/server'
 import { MONGODB } from '@/lib/config'
-import { withMongoDB } from '@/app/api/_serverUtils'
+import { initializeMongoDB } from '@/app/api/_serverUtils'
 
-// Health check handler
-async function handleGET() {
+// Health check handler - Next.js 15 requires Route Handlers to be defined directly
+export async function GET() {
   console.log('Health check requested')
   
   try {
+    // Initialize MongoDB first
+    await initializeMongoDB();
+    
     // Import the database utilities
     const { getMongoClient } = await import('@/lib/db')
     
@@ -44,7 +47,4 @@ async function handleGET() {
       }
     }, { status: 500 })
   }
-}
-
-// Export the handler with MongoDB initialization
-export const GET = withMongoDB(handleGET) 
+} 

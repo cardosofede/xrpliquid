@@ -32,7 +32,7 @@ export async function initializeMongoDB() {
 /**
  * Wrap an API handler with MongoDB initialization
  */
-export function withMongoDB(handler: Function) {
+export async function withMongoDB(handler: Function) {
   return async function(...args: any[]) {
     // Initialize MongoDB
     await initializeMongoDB();
