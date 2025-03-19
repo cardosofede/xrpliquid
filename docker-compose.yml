@@ -8,13 +8,15 @@ services:
       - "3000:3000"
     environment:
       - NODE_ENV=production
-      - MONGO_URI=mongodb://xrpl:xrpl@host.docker.internal:27017
+      - MONGO_URI=mongodb://xrpl:xrpl@xrpl-mongo:27017/
+      - MONGO_DB_NAME=xrpl_transactions
+      - DOCKER_ENV=true
     restart: unless-stopped
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
     networks:
-      - xrpl-network
+      - xrpl-tag-streamer_local
+    external_links:
+      - xrpl-mongo
 
 networks:
-  xrpl-network:
-    name: xrpl-network 
+  xrpl-tag-streamer_local:
+    external: true 
