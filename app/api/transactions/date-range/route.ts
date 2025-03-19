@@ -29,19 +29,21 @@ export async function GET() {
     if (transactions.length > 0) {
       // Sort transactions by timestamp (either createdAt or updatedAt)
       const sortedByCreation = [...transactions].sort((a, b) => {
-        const dateA = a.createdAt ? new Date(a.createdAt) : new Date()
-        const dateB = b.createdAt ? new Date(b.createdAt) : new Date()
+        const dateA = a.close_time_iso ? new Date(a.close_time_iso) : (a.createdAt ? new Date(a.createdAt) : new Date())
+        const dateB = b.close_time_iso ? new Date(b.close_time_iso) : (b.createdAt ? new Date(b.createdAt) : new Date())
         return dateA.getTime() - dateB.getTime()
       })
       
       const sortedByRecent = [...transactions].sort((a, b) => {
-        const dateA = a.createdAt ? new Date(a.createdAt) : new Date() 
-        const dateB = b.createdAt ? new Date(b.createdAt) : new Date()
+        const dateA = a.close_time_iso ? new Date(a.close_time_iso) : (a.createdAt ? new Date(a.createdAt) : new Date())
+        const dateB = b.close_time_iso ? new Date(b.close_time_iso) : (b.createdAt ? new Date(b.createdAt) : new Date())
         return dateB.getTime() - dateA.getTime()
       })
       
-      minDate = sortedByCreation[0].createdAt ? new Date(sortedByCreation[0].createdAt) : new Date()
-      maxDate = sortedByRecent[0].createdAt ? new Date(sortedByRecent[0].createdAt) : new Date()
+      minDate = sortedByCreation[0].close_time_iso ? new Date(sortedByCreation[0].close_time_iso) : 
+               (sortedByCreation[0].createdAt ? new Date(sortedByCreation[0].createdAt) : new Date())
+      maxDate = sortedByRecent[0].close_time_iso ? new Date(sortedByRecent[0].close_time_iso) : 
+               (sortedByRecent[0].createdAt ? new Date(sortedByRecent[0].createdAt) : new Date())
       console.log(`Date range: ${minDate.toISOString()} - ${maxDate.toISOString()}`)
     } else {
       console.log('No transactions found, using current date')
