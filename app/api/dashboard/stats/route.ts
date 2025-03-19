@@ -21,28 +21,39 @@ interface Trade {
   [key: string]: any;
 }
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
     console.log('Fetching dashboard stats...')
+    
+    // Parse the URL to get any query parameters
+    const url = new URL(request.url);
+    const userId = url.searchParams.get('userId');
+    
+    console.log('Stats request params:', { userId });
     console.log('MongoDB configuration:', {
       URI: MONGODB.URI,
       DB_NAME: MONGODB.DB_NAME,
       DEFAULT_LIMIT: MONGODB.DEFAULT_LIMIT
     })
     
+    // If userId is provided, use it to filter queries
+    const userFilter = userId ? getUserFilterQuery(userId) : {};
+    
     // Get users count directly with count operation
     console.log('Counting users...')
     const userCount = await runQuery({
       collection: 'users',
-      operation: 'count'
+      operation: 'count',
+      query: userId ? { id: userId } : {}
     }) as number;
     console.log(`User count: ${userCount}`)
     
-    // For wallets, first get all users
+    // For wallets, first get all users (or the specific user if userId provided)
     console.log('Fetching users for wallet counting...')
     const users = await runQuery({
       collection: 'users',
-      operation: 'find'
+      operation: 'find',
+      query: userId ? { id: userId } : {}
     }) as User[];
     console.log(`Retrieved ${users.length} users for wallet processing`)
     
@@ -56,19 +67,21 @@ export async function GET() {
     const walletCount = uniqueWallets.size
     console.log(`Found ${walletCount} unique wallets`)
     
-    // Get transaction count directly
+    // Get transaction count directly, filtered by userId if provided
     console.log('Counting transactions...')
     const transactionCount = await runQuery({
       collection: 'transactions',
-      operation: 'count'
+      operation: 'count',
+      query: userFilter
     }) as number;
     console.log(`Transaction count: ${transactionCount}`)
     
-    // Get trades for volume calculation
+    // Get trades for volume calculation, filtered by userId if provided
     console.log('Fetching trades...')
     const trades = await runQuery({
       collection: 'trades',
       operation: 'find',
+      query: userFilter,
       limit: MONGODB.DEFAULT_LIMIT
     }) as Trade[];
     console.log(`Retrieved ${trades.length} trades`)
@@ -111,7 +124,12 @@ export async function GET() {
         transactionCount,
         totalVolume,
         assetVolumes
-      }
+      },
+      userCount,
+      walletCount,
+      transactionCount,
+      totalVolume,
+      assetVolumes
     })
   } catch (error) {
     console.error('Error fetching dashboard stats:', error)
@@ -127,4 +145,29 @@ export async function GET() {
       error: `Failed to fetch dashboard statistics: ${error instanceof Error ? error.message : 'Unknown error'}`
     }, { status: 500 })
   }
+}
+
+// Helper function to create a filter query for a user ID that tries multiple field combinations
+function getUserFilterQuery(userId: string) {
+  if (!userId) return {};
+  
+  return {
+    $or: [
+      // User ID fields
+      { user_id: userId },
+      { userId: userId },
+      { id: userId },
+      // Account fields
+      { account: userId },
+      { Account: userId },
+      { address: userId },
+      // Try lowercase/uppercase variations
+      { user_id: userId.toLowerCase() },
+      { userId: userId.toLowerCase() },
+      { id: userId.toLowerCase() },
+      { account: userId.toLowerCase() },
+      { Account: userId.toLowerCase() },
+      { address: userId.toLowerCase() }
+    ]
+  };
 } 
