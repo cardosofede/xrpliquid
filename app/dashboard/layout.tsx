@@ -2,7 +2,7 @@
 
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
-import { LayoutDashboard, Medal, User, Wallet } from "lucide-react"
+import { LayoutDashboard, Medal, User, Wallet, Activity } from "lucide-react"
 import Link from "next/link"
 import { usePathname } from "next/navigation"
 
@@ -53,6 +53,16 @@ export default function DashboardLayout({
               <Link href="/miners">
                 <User className="h-4 w-4" />
                 Miners
+              </Link>
+            </Button>
+            <Button 
+              variant={pathname.includes("/health") ? "default" : "ghost"} 
+              className="w-full justify-start gap-2"
+              asChild
+            >
+              <Link href="/health">
+                <Activity className="h-4 w-4" />
+                Health
               </Link>
             </Button>
           </nav>
