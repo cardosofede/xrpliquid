@@ -1,3 +1,6 @@
+"use client"
+
+import { useState, useEffect } from "react"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -11,52 +14,143 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
-import { ChevronDown, Search } from "lucide-react"
+import { ChevronDown, Search, AlertCircle, X } from "lucide-react"
 
 export default function MinersPage() {
+  const [searchValue, setSearchValue] = useState<string>("david");
+  const [displayedUser, setDisplayedUser] = useState<string>("david");
+  const [transactionCount, setTransactionCount] = useState<number>(0);
+  const [loading, setLoading] = useState<boolean>(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // Load user data based on the search value
+  const loadUserData = async (userId: string) => {
+    if (!userId.trim()) {
+      setError("Please enter a user ID");
+      return;
+    }
+    
+    setLoading(true);
+    setError(null);
+    try {
+      // Use the dashboard stats API since it already works
+      const response = await fetch(`/api/dashboard/stats?userId=${encodeURIComponent(userId)}`);
+      
+      if (!response.ok) {
+        throw new Error(`Failed to load data: ${response.statusText}`);
+      }
+      
+      const data = await response.json();
+      console.log('Dashboard stats response:', data);
+      
+      // Set transaction count from the stats response
+      setTransactionCount(data.stats?.transactionCount || 0);
+      setDisplayedUser(userId);
+    } catch (error) {
+      console.error('Error fetching user data:', error);
+      setError(error instanceof Error ? error.message : 'An error occurred while loading data');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Handle search submit
+  const handleViewClick = () => {
+    loadUserData(searchValue);
+  };
+
+  // Handle key press in search input
+  const handleKeyPress = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter') {
+      handleViewClick();
+    }
+  };
+
+  // Clear search
+  const handleClearSearch = () => {
+    setSearchValue("");
+  };
+
+  // Clear displayed user
+  const handleClearDisplayedUser = () => {
+    setDisplayedUser("");
+    setTransactionCount(0);
+  };
+
+  // Initial data load
+  useEffect(() => {
+    loadUserData(searchValue);
+  }, []);
+
   return (
     <>
       <div className="mb-6 flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold">Miner Details</h1>
-          <p className="text-muted-foreground">User_1001</p>
+          {displayedUser && (
+            <div className="flex items-center gap-2 mt-1">
+              <div className="px-3 py-1 bg-slate-100 dark:bg-slate-800 rounded-md text-sm flex items-center gap-1">
+                {displayedUser}
+                <button 
+                  onClick={handleClearDisplayedUser} 
+                  className="ml-1 text-slate-500 hover:text-slate-700 focus:outline-none"
+                  aria-label="Clear displayed user"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            </div>
+          )}
         </div>
         <div className="flex gap-2">
           <div className="relative w-64">
             <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
-            <Input placeholder="Search user ID..." className="pl-8" />
+            <Input 
+              placeholder="Search user ID..." 
+              className="pl-8" 
+              value={searchValue}
+              onChange={(e) => setSearchValue(e.target.value)}
+              onKeyUp={handleKeyPress}
+            />
+            {searchValue && (
+              <button 
+                className="absolute right-2 top-2.5 text-muted-foreground hover:text-foreground focus:outline-none"
+                onClick={handleClearSearch}
+                aria-label="Clear search input"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            )}
           </div>
-          <Button variant="default">View</Button>
+          <Button 
+            variant="default" 
+            onClick={handleViewClick}
+            disabled={loading}
+          >
+            {loading ? 'Loading...' : 'View'}
+          </Button>
         </div>
       </div>
+      
+      {error && (
+        <div className="mb-6 p-4 border border-red-200 rounded-md bg-red-50 text-red-700 flex items-center gap-2">
+          <AlertCircle className="h-5 w-5" />
+          <p>{error}</p>
+        </div>
+      )}
       
       <div className="grid gap-6 md:grid-cols-3">
         <MetricsCard
           title="Total Transactions"
-          value="143"
-          change={{
-            value: "12",
-            percentage: "+9.2%",
-            isPositive: true
-          }}
+          value={transactionCount.toString()}
         />
         <MetricsCard
           title="Total Volume"
-          value="$24,521"
-          change={{
-            value: "$1,840",
-            percentage: "+8.1%",
-            isPositive: true
-          }}
+          value="$0"
         />
         <MetricsCard
           title="Current Score"
-          value="892"
-          change={{
-            value: "65",
-            percentage: "+7.9%",
-            isPositive: true
-          }}
+          value="0"
         />
       </div>
       
@@ -90,15 +184,9 @@ export default function MinersPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {Array.from({ length: 5 }).map((_, i) => (
-                  <TableRow key={i}>
-                    <TableCell className="font-medium">ORD-{Math.floor(Math.random() * 10000)}</TableCell>
-                    <TableCell>XRP/RLUSD</TableCell>
-                    <TableCell>${(Math.random() * 1000 + 100).toFixed(2)}</TableCell>
-                    <TableCell>{i % 2 === 0 ? "Buy" : "Sell"}</TableCell>
-                    <TableCell className="text-right">{new Date().toLocaleDateString()}</TableCell>
-                  </TableRow>
-                ))}
+                <TableRow>
+                  <TableCell colSpan={5} className="text-center py-4">No active orders found</TableCell>
+                </TableRow>
               </TableBody>
             </Table>
           </div>
