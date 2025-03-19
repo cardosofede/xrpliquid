@@ -162,26 +162,6 @@ export default async function DashboardPage() {
   
   const { userCount, walletCount, transactionCount, totalVolume, assetVolumes } = await getDashboardStats()
   
-  // Calculate changes (typically would compare to previous period)
-  // These are placeholder calculations - in a real app you'd fetch historical data for comparison
-  const userChange = {
-    value: formatNumber(Math.floor(userCount * 0.05)),
-    percentage: "+5%",
-    isPositive: true
-  }
-  
-  const walletChange = {
-    value: formatNumber(Math.floor(walletCount * 0.08)),
-    percentage: "+8%",
-    isPositive: true
-  }
-  
-  const transactionChange = {
-    value: formatNumber(Math.floor(transactionCount * 0.12)),
-    percentage: "+12%",
-    isPositive: true
-  }
-  
   // Debug info for date troubleshooting
   const debugInfo = {
     minDate: minDate instanceof Date ? minDate.toISOString() : 'Not a Date',
@@ -229,21 +209,22 @@ export default async function DashboardPage() {
         </div>
       )}
       
-      <div className="grid gap-6 md:grid-cols-3">
+      <div className="grid gap-6 md:grid-cols-4">
         <MetricsCard
           title="Users"
           value={formatNumber(userCount)}
-          change={userChange}
         />
         <MetricsCard
           title="Wallets"
           value={formatNumber(walletCount)}
-          change={walletChange}
         />
         <MetricsCard
           title="Transactions"
           value={formatNumber(transactionCount)}
-          change={transactionChange}
+        />
+        <MetricsCard
+          title="Volume (RLUSD)"
+          value={`${formatNumber(totalVolume)}`}
         />
       </div>
       <div className="mt-6 grid gap-6 md:grid-cols-2">
@@ -262,7 +243,7 @@ export default async function DashboardPage() {
         </Card>
         <Card className="p-6 bg-background">
           <div className="mb-4">
-            <h2 className="text-xl font-bold">Total Volume by Asset</h2>
+            <h2 className="text-xl font-bold">Transaction Count</h2>
             <div className="mt-4 flex flex-wrap gap-2">
               <Button variant="outline" size="sm" className="rounded-full">Today</Button>
               <Button variant="outline" size="sm" className="rounded-full">Last week</Button>
