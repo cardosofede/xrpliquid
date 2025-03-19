@@ -1,3 +1,7 @@
+// Force dynamic rendering to avoid stale data
+export const dynamic = 'force-dynamic';
+export const revalidate = 0;
+
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import { MetricsCard } from "@/components/metrics-card"
@@ -9,8 +13,20 @@ import { API, DEFAULTS } from "@/lib/config"
 // Function to fetch transaction date range
 async function getTransactionDateRange() {
   try {
-    const response = await fetch(`${API.BASE_URL}/api/transactions/date-range`, {
-      next: { revalidate: API.REVALIDATION_TIME }
+    console.log('API Request: GET /api/transactions/date-range');
+    
+    // Use absolute URL format for server components
+    const url = new URL('/api/transactions/date-range', 'http://localhost:3000');
+    url.searchParams.append('t', Date.now().toString());
+    
+    const response = await fetch(url, {
+      next: { revalidate: 0 }, // Disable caching
+      cache: 'no-store',
+      headers: {
+        'Cache-Control': 'no-cache, no-store, must-revalidate',
+        'Pragma': 'no-cache',
+        'Expires': '0'
+      }
     })
     
     if (!response.ok) {
@@ -18,9 +34,24 @@ async function getTransactionDateRange() {
     }
     
     const data = await response.json()
+    console.log('Transaction date range API response:', data);
+    
+    // Create proper Date objects from ISO strings
+    const minDate = data.minDate ? new Date(data.minDate) : new Date();
+    const maxDate = data.maxDate ? new Date(data.maxDate) : new Date();
+    
+    console.log('Parsed date objects:', { 
+      minDateStr: data.minDate,
+      minDateObj: minDate,
+      minDateIso: minDate.toISOString(),
+      maxDateStr: data.maxDate,
+      maxDateObj: maxDate,
+      maxDateIso: maxDate.toISOString()
+    });
+    
     return {
-      minDate: new Date(data.minDate),
-      maxDate: new Date(data.maxDate),
+      minDate,
+      maxDate,
       transactionCount: data.transactionCount || 0
     }
   } catch (error) {
@@ -37,8 +68,20 @@ async function getTransactionDateRange() {
 // Function to fetch dashboard statistics
 async function getDashboardStats() {
   try {
-    const response = await fetch(`${API.BASE_URL}/api/dashboard/stats`, {
-      next: { revalidate: API.REVALIDATION_TIME }
+    console.log('API Request: GET /api/dashboard/stats');
+    
+    // Use absolute URL format for server components
+    const url = new URL('/api/dashboard/stats', 'http://localhost:3000');
+    url.searchParams.append('t', Date.now().toString());
+    
+    const response = await fetch(url, {
+      next: { revalidate: 0 }, // Disable caching
+      cache: 'no-store',
+      headers: {
+        'Cache-Control': 'no-cache, no-store, must-revalidate',
+        'Pragma': 'no-cache',
+        'Expires': '0'
+      }
     })
     
     if (!response.ok) {
@@ -61,7 +104,46 @@ async function getDashboardStats() {
 }
 
 function formatDateRange(minDate: Date, maxDate: Date) {
-  return `${minDate.toLocaleDateString('en-US', DEFAULTS.DATE_FORMAT_OPTIONS)} - ${maxDate.toLocaleDateString('en-US', DEFAULTS.DATE_FORMAT_OPTIONS)}`
+  console.log('Formatting date range', { 
+    minDate, 
+    maxDate, 
+    minDateType: typeof minDate,
+    maxDateType: typeof maxDate,
+    minDateIsValid: minDate instanceof Date && !isNaN(minDate.getTime()),
+    maxDateIsValid: maxDate instanceof Date && !isNaN(maxDate.getTime()),
+  });
+
+  // Check if dates are valid
+  if (!(minDate instanceof Date) || !(maxDate instanceof Date) || 
+      isNaN(minDate.getTime()) || isNaN(maxDate.getTime())) {
+    console.error('Invalid date objects received:', { minDate, maxDate });
+    return 'Invalid date range';
+  }
+  
+  // Check if min and max dates are the same
+  const sameDay = minDate.getDate() === maxDate.getDate() && 
+                  minDate.getMonth() === maxDate.getMonth() && 
+                  minDate.getFullYear() === maxDate.getFullYear();
+  
+  if (sameDay) {
+    return minDate.toLocaleDateString('en-US', DEFAULTS.DATE_FORMAT_OPTIONS);
+  } else {
+    // Different formatting based on whether years are the same
+    const sameYear = minDate.getFullYear() === maxDate.getFullYear();
+    
+    if (sameYear) {
+      // Same year, show full first date but only month and day for second date
+      const firstDate = minDate.toLocaleDateString('en-US', DEFAULTS.DATE_FORMAT_OPTIONS);
+      const secondDate = maxDate.toLocaleDateString('en-US', {
+        month: 'short',
+        day: 'numeric'
+      });
+      return `${firstDate} - ${secondDate}, ${maxDate.getFullYear()}`;
+    } else {
+      // Different years, show full dates for both
+      return `${minDate.toLocaleDateString('en-US', DEFAULTS.DATE_FORMAT_OPTIONS)} - ${maxDate.toLocaleDateString('en-US', DEFAULTS.DATE_FORMAT_OPTIONS)}`;
+    }
+  }
 }
 
 function formatNumber(num: number): string {
@@ -100,6 +182,32 @@ export default async function DashboardPage() {
     isPositive: true
   }
   
+  // Debug info for date troubleshooting
+  const debugInfo = {
+    minDate: minDate instanceof Date ? minDate.toISOString() : 'Not a Date',
+    maxDate: maxDate instanceof Date ? maxDate.toISOString() : 'Not a Date',
+    minDateObj: {
+      day: minDate.getDate(),
+      month: minDate.getMonth() + 1,
+      year: minDate.getFullYear(),
+      time: minDate.toTimeString()
+    },
+    maxDateObj: {
+      day: maxDate.getDate(),
+      month: maxDate.getMonth() + 1,
+      year: maxDate.getFullYear(),
+      time: maxDate.toTimeString()
+    },
+    dateRangeText,
+    areSameDates: minDate.getTime() === maxDate.getTime(),
+    areSameDays: minDate.getDate() === maxDate.getDate() && 
+                minDate.getMonth() === maxDate.getMonth() && 
+                minDate.getFullYear() === maxDate.getFullYear(),
+    userCount,
+    walletCount,
+    transactionCount
+  }
+  
   return (
     <>
       <div className="mb-6 flex items-center justify-between">
@@ -112,6 +220,15 @@ export default async function DashboardPage() {
           <ChevronDown className="h-4 w-4" />
         </Button>
       </div>
+      
+      {/* Debug info - remove in production */}
+      {process.env.NODE_ENV !== 'production' && (
+        <div className="mb-6 p-4 bg-black/10 rounded-md text-xs overflow-auto max-h-48">
+          <h3 className="font-bold mb-2">Debug Info:</h3>
+          <pre>{JSON.stringify(debugInfo, null, 2)}</pre>
+        </div>
+      )}
+      
       <div className="grid gap-6 md:grid-cols-3">
         <MetricsCard
           title="Users"
