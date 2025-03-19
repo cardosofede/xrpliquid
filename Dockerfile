@@ -1,5 +1,5 @@
 # Use the Node.js base image
-FROM node:20-slim
+FROM node:20
 
 # Set working directory
 WORKDIR /app
@@ -8,13 +8,13 @@ WORKDIR /app
 COPY package*.json ./
 
 # Install dependencies
-RUN npm install
+RUN npm install --legacy-peer-deps
 
 # Copy remaining files
 COPY . .
 
 # Set environment variables
-ENV MONGO_URI=mongodb://xrpl:xrpl@xrpl-mongo:27017/
+ENV MONGO_URI=mongodb://xrpl:xrpl@host.docker.internal:27017/
 ENV MONGO_DB_NAME=xrpl_transactions
 ENV DOCKER_ENV=true
 ENV NEXT_PUBLIC_API_URL=http://localhost:3000

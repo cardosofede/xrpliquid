@@ -1,14 +1,11 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
-  swcMinify: true,
   output: 'standalone', // Needed for Docker
-  experimental: {
-    // This is critical - explicitly mark mongodb as server-only
-    serverComponentsExternalPackages: ['mongodb', 'mongoose'],
-    // Add server actions support
-    serverActions: true,
-  },
+  
+  // Next.js 15 has removed several experimental options
+  experimental: {},
+  
   webpack: (config, { isServer }) => {
     // Only exclude mongodb in client-side bundles
     if (!isServer) {

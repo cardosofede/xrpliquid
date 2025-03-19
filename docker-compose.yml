@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   app:
     container_name: xrpl-app
@@ -10,31 +8,12 @@ services:
       - "3000:3000"
     environment:
       - NODE_ENV=production
-      - MONGO_URI=mongodb://xrpl:xrpl@xrpl-mongo:27017
-    depends_on:
-      - mongo
+      - MONGO_URI=mongodb://xrpl:xrpl@host.docker.internal:27017
     restart: unless-stopped
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     networks:
       - xrpl-network
-
-  mongo:
-    container_name: xrpl-mongo
-    image: mongo:6
-    ports:
-      - "27017:27017"
-    environment:
-      - MONGO_INITDB_ROOT_USERNAME=xrpl
-      - MONGO_INITDB_ROOT_PASSWORD=xrpl
-      - MONGO_INITDB_DATABASE=xrpl_transactions
-    volumes:
-      - mongodb_data:/data/db
-    restart: unless-stopped
-    networks:
-      - xrpl-network
-
-volumes:
-  mongodb_data:
-    name: xrpl-mongo-data
 
 networks:
   xrpl-network:
