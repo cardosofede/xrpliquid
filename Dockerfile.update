@@ -1,0 +1,33 @@
+# Use the Node.js base image
+FROM node:20-slim
+
+# Set working directory
+WORKDIR /app
+
+# Copy package.json and package-lock.json
+COPY package*.json ./
+
+# Install dependencies
+RUN npm ci
+
+# Copy remaining files
+COPY . .
+
+# Make MongoDB check script executable
+RUN chmod +x scripts/check-mongodb.js
+
+# Build the application
+RUN npm run build
+
+# Expose the port
+EXPOSE 3000
+
+# Set up script to check MongoDB connectivity before starting the app
+COPY docker-entrypoint.sh /usr/local/bin/
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+
+# Set entrypoint
+ENTRYPOINT ["docker-entrypoint.sh"]
+
+# Start the application
+CMD ["npm", "start"] 
