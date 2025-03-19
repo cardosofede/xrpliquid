@@ -65,8 +65,6 @@ export default function MinersPage() {
   const [ordersLoading, setOrdersLoading] = useState<boolean>(false);
   const [ordersError, setOrdersError] = useState<string | null>(null);
   const [selectedPair, setSelectedPair] = useState<string>("ALL");
-  const [selectedStatus, setSelectedStatus] = useState<string>("ALL");
-  const [selectedSide, setSelectedSide] = useState<string>("ALL");
 
   // Load user data based on the search value
   const loadUserData = async (userId: string) => {
@@ -103,13 +101,7 @@ export default function MinersPage() {
   };
   
   // Load order history for the given user
-  const loadOrderHistory = async (
-    userId: string, 
-    page: number = 1, 
-    tradingPair: string = "ALL",
-    status: string = "ALL",
-    side: string = "ALL"
-  ) => {
+  const loadOrderHistory = async (userId: string, page: number = 1, tradingPair: string = "ALL") => {
     setOrdersLoading(true);
     setOrdersError(null);
     
@@ -119,16 +111,6 @@ export default function MinersPage() {
       // Add trading pair filter if not ALL
       if (tradingPair !== "ALL") {
         url += `&tradingPair=${encodeURIComponent(tradingPair)}`;
-      }
-      
-      // Add status filter if not ALL
-      if (status !== "ALL") {
-        url += `&status=${encodeURIComponent(status)}`;
-      }
-      
-      // Add side filter if not ALL
-      if (side !== "ALL") {
-        url += `&side=${encodeURIComponent(side)}`;
       }
       
       const response = await fetch(url);
@@ -168,35 +150,13 @@ export default function MinersPage() {
       ...prev,
       page: 1
     }));
-    loadOrderHistory(displayedUser, 1, value, selectedStatus, selectedSide);
-  };
-  
-  // Handle status filter change
-  const handleStatusChange = (value: string) => {
-    setSelectedStatus(value);
-    // Reset to page 1 when changing the status
-    setOrdersPagination(prev => ({
-      ...prev,
-      page: 1
-    }));
-    loadOrderHistory(displayedUser, 1, selectedPair, value, selectedSide);
-  };
-  
-  // Handle side filter change
-  const handleSideChange = (value: string) => {
-    setSelectedSide(value);
-    // Reset to page 1 when changing the side
-    setOrdersPagination(prev => ({
-      ...prev,
-      page: 1
-    }));
-    loadOrderHistory(displayedUser, 1, selectedPair, selectedStatus, value);
+    loadOrderHistory(displayedUser, 1, value);
   };
   
   // Handle pagination for order history
   const handleOrderPageChange = (newPage: number) => {
     if (newPage > 0 && newPage <= ordersPagination.totalPages) {
-      loadOrderHistory(displayedUser, newPage, selectedPair, selectedStatus, selectedSide);
+      loadOrderHistory(displayedUser, newPage, selectedPair);
     }
   };
 
@@ -358,54 +318,23 @@ export default function MinersPage() {
       
       <div className="mt-6">
         <Card className="bg-background">
-          <div className="p-4 border-b">
+          <div className="p-4 border-b flex justify-between items-center">
             <h2 className="text-xl font-bold">Order History</h2>
-            <div className="mt-4 flex flex-wrap items-center gap-3">
-              <div className="flex items-center gap-2">
-                <span className="text-sm text-muted-foreground">Trading Pair:</span>
-                <Select value={selectedPair} onValueChange={handleTradingPairChange}>
-                  <SelectTrigger className="w-[150px]">
-                    <SelectValue placeholder="Select pair" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="ALL">All Pairs</SelectItem>
-                    {TRADING_PAIRS.map(pair => (
-                      <SelectItem key={pair.id} value={pair.id}>
-                        {pair.id}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              
-              <div className="flex items-center gap-2">
-                <span className="text-sm text-muted-foreground">Status:</span>
-                <Select value={selectedStatus} onValueChange={handleStatusChange}>
-                  <SelectTrigger className="w-[150px]">
-                    <SelectValue placeholder="Select status" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="ALL">All Status</SelectItem>
-                    <SelectItem value="Filled">Filled</SelectItem>
-                    <SelectItem value="Cancelled">Cancelled</SelectItem>
-                    <SelectItem value="partially_filled">Partially Filled</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              
-              <div className="flex items-center gap-2">
-                <span className="text-sm text-muted-foreground">Side:</span>
-                <Select value={selectedSide} onValueChange={handleSideChange}>
-                  <SelectTrigger className="w-[150px]">
-                    <SelectValue placeholder="Select side" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="ALL">All Sides</SelectItem>
-                    <SelectItem value="BUY">Buy</SelectItem>
-                    <SelectItem value="SELL">Sell</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
+            <div className="flex items-center gap-2">
+              <span className="text-sm text-muted-foreground">Trading Pair:</span>
+              <Select value={selectedPair} onValueChange={handleTradingPairChange}>
+                <SelectTrigger className="w-[180px]">
+                  <SelectValue placeholder="Select pair" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="ALL">All Pairs</SelectItem>
+                  {TRADING_PAIRS.map(pair => (
+                    <SelectItem key={pair.id} value={pair.id}>
+                      {pair.id}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
           </div>
           <div className="p-4">
