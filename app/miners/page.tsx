@@ -63,8 +63,26 @@ interface Order {
   price: string;
   amount: string;
   filledAmount: string | null;
+  executedPrice: string | null;
   status: string;
   date: string;
+  fee: string;
+  rawData: any;
+}
+
+// Transaction interface for deposits and withdrawals
+interface Transaction {
+  id: string;
+  userId: string;
+  type: "deposit" | "withdrawal";
+  amount: string;
+  currency: string;
+  fee: string;
+  fromAddress: string;
+  toAddress: string;
+  timestamp: string;
+  hash: string;
+  ledgerIndex: number;
   rawData: any;
 }
 
@@ -78,6 +96,20 @@ interface Pagination {
 
 // Global fuzzy filter for the table
 const fuzzyFilter: FilterFn<Order> = (row, columnId, value, addMeta) => {
+  // Rank the item
+  const itemRank = rankItem(row.getValue(columnId), value)
+  
+  // Store the ranking info
+  addMeta({
+    itemRank,
+  })
+  
+  // Return if the item should be filtered in/out
+  return itemRank.passed
+}
+
+// Separate fuzzy filter for transactions table
+const transactionsFuzzyFilter: FilterFn<Transaction> = (row, columnId, value, addMeta) => {
   // Rank the item
   const itemRank = rankItem(row.getValue(columnId), value)
   
@@ -108,11 +140,49 @@ export default function MinersPage() {
   const [ordersLoading, setOrdersLoading] = useState<boolean>(false);
   const [ordersError, setOrdersError] = useState<string | null>(null);
   const [selectedPair, setSelectedPair] = useState<string>("ALL");
+  const [selectedSide, setSelectedSide] = useState<string | undefined>(undefined);
+  const [selectedStatus, setSelectedStatus] = useState<string | undefined>(undefined);
+
+  // Active open orders state - keep it simple
+  const [openOrders, setOpenOrders] = useState<any[]>([]);
+  const [openOrdersLoading, setOpenOrdersLoading] = useState<boolean>(false);
+  const [openOrdersError, setOpenOrdersError] = useState<string | null>(null);
+  const [openOrdersPage, setOpenOrdersPage] = useState<number>(1);
+  const [openOrdersPagination, setOpenOrdersPagination] = useState<{
+    page: number;
+    limit: number;
+    totalPages: number;
+    totalCount: number;
+  }>({
+    page: 1,
+    limit: 15,
+    totalPages: 1,
+    totalCount: 0
+  });
 
   // Table state
   const [sorting, setSorting] = useState<SortingState>([])
   const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>([])
   const [globalFilter, setGlobalFilter] = useState('')
+  const [pageIndex, setPageIndex] = useState(0)
+  const [pageSize, setPageSize] = useState(10)
+
+  // Deposits/withdrawals state
+  const [transactions, setTransactions] = useState<Transaction[]>([]);
+  const [transactionsPagination, setTransactionsPagination] = useState<Pagination>({
+    page: 1,
+    limit: 10,
+    totalPages: 1,
+    totalCount: 0
+  });
+  const [transactionsLoading, setTransactionsLoading] = useState<boolean>(false);
+  const [transactionsError, setTransactionsError] = useState<string | null>(null);
+  const [selectedType, setSelectedType] = useState<string | undefined>(undefined);
+  const [selectedCurrency, setSelectedCurrency] = useState<string | undefined>(undefined);
+  const [transactionsSorting, setTransactionsSorting] = useState<SortingState>([]);
+  const [transactionsPageIndex, setTransactionsPageIndex] = useState(0);
+  const [transactionsPageSize, setTransactionsPageSize] = useState(10);
+  const [transactionsGlobalFilter, setTransactionsGlobalFilter] = useState('');
 
   // Load user data based on the search value
   const loadUserData = async (userId: string) => {
@@ -138,8 +208,28 @@ export default function MinersPage() {
       setTransactionCount(data.stats?.transactionCount || 0);
       setDisplayedUser(userId);
       
+      // Reset pagination and filters before loading orders
+      setPageIndex(0);
+      setSelectedPair("ALL");
+      setSelectedSide(undefined);
+      setSelectedStatus(undefined);
+      
+      // Reset transactions pagination and filters
+      setTransactionsPageIndex(0);
+      setSelectedType(undefined);
+      setSelectedCurrency(undefined);
+      
+      // Reset open orders pagination
+      setOpenOrdersPage(1);
+      
       // Load order history for this user
-      loadOrderHistory(userId);
+      await loadOrderHistory(userId, 1, "ALL", undefined, undefined);
+      
+      // Load open orders for this user (page 1)
+      await loadOpenOrders(userId, 1);
+      
+      // Load deposits and withdrawals for this user
+      await loadTransactions(userId, 1);
     } catch (error) {
       console.error('Error fetching user data:', error);
       setError(error instanceof Error ? error.message : 'An error occurred while loading data');
@@ -148,18 +238,48 @@ export default function MinersPage() {
     }
   };
   
-  // Load order history for the given user
-  const loadOrderHistory = async (userId: string, page: number = 1, tradingPair: string = "ALL") => {
+  // Load order history for the given user with filters
+  const loadOrderHistory = async (
+    userId: string, 
+    page: number = 1, 
+    tradingPair: string = "ALL", 
+    side?: string,
+    status?: string,
+    sortField?: string,
+    sortDirection?: string
+  ) => {
+    if (!userId) return;
+    
     setOrdersLoading(true);
     setOrdersError(null);
     
     try {
-      let url = `/api/miners/orders?userId=${encodeURIComponent(userId)}&page=${page}&limit=10`;
+      // Still request 50 records to have enough data for client-side pagination
+      const limit = 50;
+      
+      let url = `/api/miners/orders?userId=${encodeURIComponent(userId)}&page=${page}&limit=${limit}`;
       
       // Add trading pair filter if not ALL
       if (tradingPair !== "ALL") {
         url += `&tradingPair=${encodeURIComponent(tradingPair)}`;
       }
+      
+      // Add side filter if specified
+      if (side) {
+        url += `&side=${encodeURIComponent(side)}`;
+      }
+      
+      // Add status filter if specified
+      if (status) {
+        url += `&status=${encodeURIComponent(status)}`;
+      }
+      
+      // Add sorting if specified
+      if (sortField) {
+        url += `&sortField=${encodeURIComponent(sortField)}&sortDirection=${sortDirection || 'asc'}`;
+      }
+      
+      console.log('Fetching orders with URL:', url);
       
       const response = await fetch(url);
       
@@ -171,13 +291,26 @@ export default function MinersPage() {
       console.log('Order history response:', data);
       
       if (data.success) {
+        // Store all orders
         setOrders(data.data || []);
-        setOrdersPagination(data.pagination || {
-          page: 1,
-          limit: 10,
-          totalPages: 1,
-          totalCount: 0
+        
+        // Calculate total pages based on total count and page size (for display only)
+        const totalCount = data.pagination?.totalCount || 0;
+        const totalPages = totalCount > 0 
+          ? Math.ceil(totalCount / pageSize)
+          : 1;
+          
+        console.log(`Pagination: page ${page}, total pages ${totalPages}, total count ${totalCount}`);
+        
+        setOrdersPagination({
+          page: 1, // Reset to page 1 for client-side pagination
+          limit: pageSize,
+          totalPages: totalPages,
+          totalCount: totalCount
         });
+        
+        // Reset to first page
+        setPageIndex(0);
       } else {
         throw new Error(data.error || 'Failed to load order history');
       }
@@ -190,24 +323,162 @@ export default function MinersPage() {
     }
   };
   
+  // Simple function to load open orders with pagination
+  const loadOpenOrders = async (userId: string, page: number = 1) => {
+    if (!userId) return;
+    
+    setOpenOrdersLoading(true);
+    setOpenOrdersError(null);
+    
+    try {
+      // Use pagination parameters
+      const url = `/api/miners/open-orders?userId=${encodeURIComponent(userId)}&page=${page}&limit=${openOrdersPagination.limit}`;
+      
+      console.log(`Fetching open orders (page ${page}) with URL:`, url);
+      
+      const response = await fetch(url);
+      
+      if (!response.ok) {
+        throw new Error(`Failed to load open orders: ${response.statusText}`);
+      }
+      
+      const data = await response.json();
+      console.log(`Open orders response: Found ${data.data?.length || 0} orders (page ${data.pagination?.page || 1} of ${data.pagination?.totalPages || 1})`);
+      
+      if (data.success) {
+        setOpenOrders(data.data || []);
+        setOpenOrdersPagination({
+          page: data.pagination?.page || 1,
+          limit: data.pagination?.limit || 15,
+          totalPages: data.pagination?.totalPages || 1,
+          totalCount: data.pagination?.totalCount || 0
+        });
+        setOpenOrdersPage(data.pagination?.page || 1);
+      } else {
+        throw new Error(data.error || 'Failed to load open orders');
+      }
+    } catch (error) {
+      console.error('Error fetching open orders:', error);
+      setOpenOrdersError(error instanceof Error ? error.message : 'An error occurred while loading open orders');
+      setOpenOrders([]);
+    } finally {
+      setOpenOrdersLoading(false);
+    }
+  };
+  
+  // Load deposits and withdrawals for the given user with filters
+  const loadTransactions = async (
+    userId: string, 
+    page: number = 1, 
+    type?: string,
+    currency?: string
+  ) => {
+    if (!userId) return;
+    
+    setTransactionsLoading(true);
+    setTransactionsError(null);
+    
+    try {
+      // Request transactions with pagination
+      const limit = 50; // Fetch more for client-side pagination
+      
+      let url = `/api/miners/deposits-withdrawals?userId=${encodeURIComponent(userId)}&page=${page}&limit=${limit}`;
+      
+      // Add type filter if specified
+      if (type) {
+        url += `&type=${encodeURIComponent(type)}`;
+      }
+      
+      // Add currency filter if specified
+      if (currency) {
+        url += `&currency=${encodeURIComponent(currency)}`;
+      }
+      
+      console.log('Fetching transactions with URL:', url);
+      
+      const response = await fetch(url);
+      
+      if (!response.ok) {
+        throw new Error(`Failed to load transactions: ${response.statusText}`);
+      }
+      
+      const data = await response.json();
+      console.log('Transactions response:', data);
+      
+      if (data.success) {
+        // Store transactions
+        setTransactions(data.data || []);
+        
+        // Calculate total pages based on total count and page size
+        const totalCount = data.pagination?.totalCount || 0;
+        const totalPages = totalCount > 0 
+          ? Math.ceil(totalCount / transactionsPageSize)
+          : 1;
+          
+        setTransactionsPagination({
+          page: 1, // Reset to page 1 for client-side pagination
+          limit: transactionsPageSize,
+          totalPages: totalPages,
+          totalCount: totalCount
+        });
+        
+        // Reset to first page
+        setTransactionsPageIndex(0);
+      } else {
+        throw new Error(data.error || 'Failed to load transactions');
+      }
+    } catch (error) {
+      console.error('Error fetching transactions:', error);
+      setTransactionsError(error instanceof Error ? error.message : 'An error occurred while loading transactions');
+      setTransactions([]);
+    } finally {
+      setTransactionsLoading(false);
+    }
+  };
+  
+  // New effect for only server-side filtering and sorting, not pagination
+  useEffect(() => {
+    if (displayedUser) {
+      // Convert table sorting to API sorting
+      let sortField: string | undefined;
+      let sortDirection: string | undefined;
+      
+      if (sorting.length > 0) {
+        sortField = sorting[0].id;
+        sortDirection = sorting[0].desc ? 'desc' : 'asc';
+      }
+      
+      // Always load page 1 with server-side filtering/sorting
+      loadOrderHistory(
+        displayedUser, 
+        1, // Always page 1 since we load all data
+        selectedPair, 
+        selectedSide, 
+        selectedStatus,
+        sortField,
+        sortDirection
+      );
+    }
+  }, [displayedUser, selectedPair, selectedSide, selectedStatus, sorting]);
+  
   // Handle trading pair filter change
   const handleTradingPairChange = (value: string) => {
     setSelectedPair(value);
-    // Reset to page 1 when changing the trading pair
-    setOrdersPagination(prev => ({
-      ...prev,
-      page: 1
-    }));
-    loadOrderHistory(displayedUser, 1, value);
+    setPageIndex(0); // Reset to first page
   };
   
-  // Handle pagination for order history
-  const handleOrderPageChange = (newPage: number) => {
-    if (newPage > 0 && newPage <= ordersPagination.totalPages) {
-      loadOrderHistory(displayedUser, newPage, selectedPair);
-    }
+  // Handle side filter change
+  const handleSideFilterChange = (value: string | undefined) => {
+    setSelectedSide(value);
+    setPageIndex(0); // Reset to first page
   };
-
+  
+  // Handle status filter change
+  const handleStatusFilterChange = (value: string | undefined) => {
+    setSelectedStatus(value);
+    setPageIndex(0); // Reset to first page
+  };
+  
   // Handle search submit
   const handleViewClick = () => {
     loadUserData(searchValue);
@@ -230,6 +501,15 @@ export default function MinersPage() {
     setDisplayedUser("");
     setTransactionCount(0);
     setOrders([]);
+    setOpenOrders([]);
+    setTransactions([]);
+    setOpenOrdersPage(1);
+    setOpenOrdersPagination({
+      page: 1,
+      limit: 15,
+      totalPages: 1,
+      totalCount: 0
+    });
   };
 
   // Initial data load
@@ -420,143 +700,12 @@ export default function MinersPage() {
           </Button>
         ),
         cell: ({ row }) => {
-          const rawData = row.original.rawData;
-          const status = row.getValue('status');
-          
-          // Only calculate executed price for filled orders
-          if (status === 'Filled' && rawData && rawData.filled_gets && rawData.filled_pays) {
-            try {
-              // Get the values from the filled_gets and filled_pays fields
-              const filledGetsValue = rawData.filled_gets.value;
-              const filledPaysValue = rawData.filled_pays.value;
-              
-              if (!filledGetsValue || !filledPaysValue) {
-                return <div>0.000000</div>;
-              }
-              
-              // Instead of using the side to determine calculation, use the trading pair convention
-              // Check if filled_gets currency is XRP
-              const isGetsXRP = rawData.filled_gets.currency === "XRP";
-              // Check if filled_pays currency is XRP
-              const isPaysXRP = rawData.filled_pays.currency === "XRP";
-              
-              let executedPrice;
-              
-              // For CORE/XRP pairs, price is always XRP/CORE regardless of side
-              if (isPaysXRP && !isGetsXRP) {
-                // If pays is XRP and gets is not, price = XRP/CORE (pays/gets)
-                executedPrice = parseFloat(filledPaysValue) / parseFloat(filledGetsValue);
-              } else if (isGetsXRP && !isPaysXRP) {
-                // If gets is XRP and pays is not, price = XRP/CORE (gets/pays)
-                executedPrice = parseFloat(filledGetsValue) / parseFloat(filledPaysValue);
-              } else {
-                // For any other pair, use the standard calculation
-                const pairId = row.getValue('pair');
-                if (pairId === "CORE/XRP") {
-                  // For CORE/XRP, price is XRP/CORE
-                  if (rawData.filled_gets.currency === "434F524500000000000000000000000000000000") {
-                    executedPrice = parseFloat(filledPaysValue) / parseFloat(filledGetsValue);
-                  } else {
-                    executedPrice = parseFloat(filledGetsValue) / parseFloat(filledPaysValue);
-                  }
-                } else {
-                  // Default to original calculation based on side
-                  const side = row.getValue('side');
-                  if (side === 'BUY') {
-                    executedPrice = parseFloat(filledPaysValue) / parseFloat(filledGetsValue);
-                  } else {
-                    executedPrice = parseFloat(filledGetsValue) / parseFloat(filledPaysValue);
-                  }
-                }
-              }
-              
-              return <div>{formatAmount(executedPrice.toString())}</div>;
-            } catch (error) {
-              console.error('Error calculating executed price:', error, rawData);
-              return <div>0.000000</div>;
-            }
-          }
-          return <div>0.000000</div>;
+          const executedPrice = row.getValue('executedPrice');
+          return <div>{executedPrice ? formatAmount(executedPrice.toString()) : 'N/A'}</div>;
         },
         sortingFn: (rowA, rowB, columnId) => {
-          const rawDataA = rowA.original.rawData;
-          const rawDataB = rowB.original.rawData;
-          const statusA = rowA.getValue('status');
-          const statusB = rowB.getValue('status');
-          
-          let valueA = 0;
-          let valueB = 0;
-          
-          try {
-            if (statusA === 'Filled' && rawDataA && rawDataA.filled_gets && rawDataA.filled_pays) {
-              const filledGetsValueA = rawDataA.filled_gets.value;
-              const filledPaysValueA = rawDataA.filled_pays.value;
-              
-              if (filledGetsValueA && filledPaysValueA) {
-                const isGetsXRP_A = rawDataA.filled_gets.currency === "XRP";
-                const isPaysXRP_A = rawDataA.filled_pays.currency === "XRP";
-                
-                if (isPaysXRP_A && !isGetsXRP_A) {
-                  valueA = parseFloat(filledPaysValueA) / parseFloat(filledGetsValueA);
-                } else if (isGetsXRP_A && !isPaysXRP_A) {
-                  valueA = parseFloat(filledGetsValueA) / parseFloat(filledPaysValueA);
-                } else {
-                  const pairId = rowA.getValue('pair');
-                  if (pairId === "CORE/XRP") {
-                    // For CORE/XRP, price is XRP/CORE
-                    if (rawDataA.filled_gets.currency === "434F524500000000000000000000000000000000") {
-                      valueA = parseFloat(filledPaysValueA) / parseFloat(filledGetsValueA);
-                    } else {
-                      valueA = parseFloat(filledGetsValueA) / parseFloat(filledPaysValueA);
-                    }
-                  } else {
-                    // Default to original calculation based on side
-                    if (rowA.getValue('side') === 'BUY') {
-                      valueA = parseFloat(filledPaysValueA) / parseFloat(filledGetsValueA);
-                    } else {
-                      valueA = parseFloat(filledGetsValueA) / parseFloat(filledPaysValueA);
-                    }
-                  }
-                }
-              }
-            }
-            
-            if (statusB === 'Filled' && rawDataB && rawDataB.filled_gets && rawDataB.filled_pays) {
-              const filledGetsValueB = rawDataB.filled_gets.value;
-              const filledPaysValueB = rawDataB.filled_pays.value;
-              
-              if (filledGetsValueB && filledPaysValueB) {
-                const isGetsXRP_B = rawDataB.filled_gets.currency === "XRP";
-                const isPaysXRP_B = rawDataB.filled_pays.currency === "XRP";
-                
-                if (isPaysXRP_B && !isGetsXRP_B) {
-                  valueB = parseFloat(filledPaysValueB) / parseFloat(filledGetsValueB);
-                } else if (isGetsXRP_B && !isPaysXRP_B) {
-                  valueB = parseFloat(filledGetsValueB) / parseFloat(filledPaysValueB);
-                } else {
-                  const pairId = rowB.getValue('pair');
-                  if (pairId === "CORE/XRP") {
-                    // For CORE/XRP, price is XRP/CORE
-                    if (rawDataB.filled_gets.currency === "434F524500000000000000000000000000000000") {
-                      valueB = parseFloat(filledPaysValueB) / parseFloat(filledGetsValueB);
-                    } else {
-                      valueB = parseFloat(filledGetsValueB) / parseFloat(filledPaysValueB);
-                    }
-                  } else {
-                    // Default to original calculation based on side
-                    if (rowB.getValue('side') === 'BUY') {
-                      valueB = parseFloat(filledPaysValueB) / parseFloat(filledGetsValueB);
-                    } else {
-                      valueB = parseFloat(filledGetsValueB) / parseFloat(filledPaysValueB);
-                    }
-                  }
-                }
-              }
-            }
-          } catch (error) {
-            console.error('Error in sorting executed price:', error);
-          }
-          
+          const valueA = parseFloat(rowA.getValue(columnId)) || 0;
+          const valueB = parseFloat(rowB.getValue(columnId)) || 0;
           return valueA - valueB;
         },
       },
@@ -572,20 +721,10 @@ export default function MinersPage() {
             <ArrowUpDown className="ml-2 h-4 w-4" />
           </Button>
         ),
-        cell: ({ row }) => {
-          const rawData = row.original.rawData;
-          if (rawData && rawData.fee_xrp) {
-            return <div>{formatAmount(rawData.fee_xrp)}</div>;
-          }
-          return <div>0.000000</div>;
-        },
+        cell: ({ row }) => <div>{formatAmount(row.getValue('fee'))}</div>,
         sortingFn: (rowA, rowB, columnId) => {
-          const rawDataA = rowA.original.rawData;
-          const rawDataB = rowB.original.rawData;
-          
-          const valueA = rawDataA && rawDataA.fee_xrp ? parseFloat(rawDataA.fee_xrp) : 0;
-          const valueB = rawDataB && rawDataB.fee_xrp ? parseFloat(rawDataB.fee_xrp) : 0;
-          
+          const valueA = parseFloat(rowA.getValue(columnId)) || 0;
+          const valueB = parseFloat(rowB.getValue(columnId)) || 0;
           return valueA - valueB;
         },
       },
@@ -612,11 +751,22 @@ export default function MinersPage() {
     [selectedPair]
   );
 
-  // Initialize the table
+  // Initialize the table with client-side pagination
   const table = useReactTable({
     data: orders,
     columns,
+    manualPagination: false, // Use client-side pagination
+    manualSorting: true, // Keep server-side sorting
+    manualFiltering: true, // Keep server-side filtering for server-side filters
     onSortingChange: setSorting,
+    onPaginationChange: (updater) => {
+      const newState = typeof updater === 'function' ? updater({
+        pageIndex,
+        pageSize,
+      }) : updater;
+      setPageIndex(newState.pageIndex);
+      setPageSize(newState.pageSize);
+    },
     onColumnFiltersChange: setColumnFilters,
     onGlobalFilterChange: setGlobalFilter,
     globalFilterFn: fuzzyFilter,
@@ -628,6 +778,356 @@ export default function MinersPage() {
       sorting,
       columnFilters,
       globalFilter,
+      pagination: {
+        pageIndex,
+        pageSize,
+      },
+    },
+  });
+
+  // Handle open orders page change
+  const handleOpenOrdersPageChange = (newPage: number) => {
+    if (newPage < 1 || newPage > openOrdersPagination.totalPages || openOrdersLoading) {
+      return;
+    }
+    loadOpenOrders(displayedUser, newPage);
+  };
+
+  // Content of the active open orders card - with pagination
+  const renderActiveOpenOrders = () => {
+    return (
+      <Card className="bg-background">
+        <div className="p-4 border-b">
+          <h2 className="text-xl font-bold">
+            Active Open Orders {openOrdersPagination.totalCount > 0 && `(${openOrdersPagination.totalCount} Total)`}
+          </h2>
+        </div>
+        <div className="p-4">
+          {openOrdersError && (
+            <div className="mb-4 p-3 bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-400 rounded-md flex items-center">
+              <AlertCircle className="h-5 w-5 mr-2 flex-shrink-0" />
+              {openOrdersError}
+            </div>
+          )}
+          
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Order ID</TableHead>
+                <TableHead>Trading Pair</TableHead>
+                <TableHead>Side</TableHead>
+                <TableHead>Price</TableHead>
+                <TableHead>Amount</TableHead>
+                <TableHead>XRP Fee</TableHead>
+                <TableHead className="text-right">Created At</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {openOrdersLoading ? (
+                <TableRow>
+                  <TableCell colSpan={7} className="h-16 text-center">
+                    <Loader2 className="h-5 w-5 animate-spin mx-auto" />
+                    <span className="mt-1 block text-sm text-muted-foreground">
+                      Loading open orders...
+                    </span>
+                  </TableCell>
+                </TableRow>
+              ) : openOrders.length > 0 ? (
+                openOrders.map((order) => (
+                  <TableRow key={order.hash}>
+                    <TableCell>
+                      <a 
+                        href={`https://livenet.xrpl.org/transactions/${order.hash}`} 
+                        target="_blank" 
+                        rel="noopener noreferrer"
+                        className="text-blue-500 hover:text-blue-700 hover:underline"
+                      >
+                        {`${order.hash.substring(0, 8)}...`}
+                      </a>
+                    </TableCell>
+                    <TableCell>
+                      {order.trading_pair?.id || "Unknown/Unknown"}
+                    </TableCell>
+                    <TableCell>
+                      <span className={`px-2 py-1 rounded-full text-xs ${
+                        order.market_side?.toUpperCase() === 'BUY'
+                          ? "bg-green-500/20 text-green-500" 
+                          : order.market_side?.toUpperCase() === 'SELL'
+                            ? "bg-red-500/20 text-red-500" 
+                            : "bg-slate-500/20 text-slate-500"
+                      }`}>
+                        {order.market_side?.toUpperCase() || "UNKNOWN"}
+                      </span>
+                    </TableCell>
+                    <TableCell>{formatAmount(order.price?.toString() || "0")}</TableCell>
+                    <TableCell>{formatAmount(order.original_amount?.toString() || "0")}</TableCell>
+                    <TableCell>{formatAmount(order.fee_xrp?.toString() || "0")}</TableCell>
+                    <TableCell className="text-right">{formatDateTime(order.created_date)}</TableCell>
+                  </TableRow>
+                ))
+              ) : (
+                <TableRow>
+                  <TableCell colSpan={7} className="text-center py-4">No active orders found</TableCell>
+                </TableRow>
+              )}
+            </TableBody>
+          </Table>
+          
+          {/* Pagination controls for open orders */}
+          {openOrdersPagination.totalPages > 1 && (
+            <div className="flex items-center justify-end space-x-2 py-4 mt-2">
+              <div className="flex items-center space-x-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => handleOpenOrdersPageChange(openOrdersPage - 1)}
+                  disabled={openOrdersPage <= 1 || openOrdersLoading}
+                  className="px-4"
+                >
+                  Previous
+                </Button>
+                
+                <div className="flex items-center bg-muted px-2 rounded">
+                  <span className="text-sm mx-2">
+                    Page {openOrdersPage} of {openOrdersPagination.totalPages}
+                  </span>
+                </div>
+                
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => handleOpenOrdersPageChange(openOrdersPage + 1)}
+                  disabled={openOrdersPage >= openOrdersPagination.totalPages || openOrdersLoading}
+                  className="px-4"
+                >
+                  Next
+                </Button>
+              </div>
+            </div>
+          )}
+        </div>
+      </Card>
+    );
+  };
+
+  // Effect for server-side filtering for transactions
+  useEffect(() => {
+    if (displayedUser) {
+      loadTransactions(displayedUser, 1, selectedType, selectedCurrency);
+    }
+  }, [displayedUser, selectedType, selectedCurrency]);
+  
+  // Handle transaction type filter change
+  const handleTypeFilterChange = (value: string | undefined) => {
+    setSelectedType(value);
+    setTransactionsPageIndex(0);
+  };
+  
+  // Handle currency filter change
+  const handleCurrencyFilterChange = (value: string | undefined) => {
+    setSelectedCurrency(value);
+    setTransactionsPageIndex(0);
+  };
+
+  // Table column definitions for transactions
+  const transactionsColumns = useMemo<ColumnDef<Transaction>[]>(
+    () => [
+      {
+        accessorKey: 'hash',
+        header: ({ column }) => (
+          <Button
+            variant="ghost"
+            onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
+            className="hover:bg-transparent px-0"
+          >
+            Transaction Hash
+            <ArrowUpDown className="ml-2 h-4 w-4" />
+          </Button>
+        ),
+        cell: ({ row }) => (
+          <a 
+            href={`https://livenet.xrpl.org/transactions/${row.getValue('hash')}`} 
+            target="_blank" 
+            rel="noopener noreferrer"
+            className="text-blue-500 hover:text-blue-700 hover:underline"
+          >
+            {`${String(row.getValue('hash')).substring(0, 8)}...`}
+          </a>
+        ),
+      },
+      {
+        accessorKey: 'type',
+        header: ({ column }) => (
+          <Button
+            variant="ghost"
+            onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
+            className="hover:bg-transparent px-0"
+          >
+            Type
+            <ArrowUpDown className="ml-2 h-4 w-4" />
+          </Button>
+        ),
+        cell: ({ row }) => (
+          <span className={`px-2 py-1 rounded-full text-xs ${
+            row.getValue('type') === 'deposit' 
+              ? "bg-green-500/20 text-green-500" 
+              : "bg-red-500/20 text-red-500"
+          }`}>
+            {(row.getValue('type') as string).toUpperCase()}
+          </span>
+        ),
+        filterFn: "equals",
+      },
+      {
+        accessorKey: 'amount',
+        header: ({ column }) => (
+          <Button
+            variant="ghost"
+            onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
+            className="hover:bg-transparent px-0"
+          >
+            Amount
+            <ArrowUpDown className="ml-2 h-4 w-4" />
+          </Button>
+        ),
+        cell: ({ row }) => <div>{formatAmount(row.getValue('amount'))}</div>,
+        sortingFn: (rowA, rowB, columnId) => {
+          const valueA = parseFloat(rowA.getValue(columnId)) || 0;
+          const valueB = parseFloat(rowB.getValue(columnId)) || 0;
+          return valueA - valueB;
+        },
+      },
+      {
+        accessorKey: 'currency',
+        header: ({ column }) => (
+          <Button
+            variant="ghost"
+            onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
+            className="hover:bg-transparent px-0"
+          >
+            Currency
+            <ArrowUpDown className="ml-2 h-4 w-4" />
+          </Button>
+        ),
+        cell: ({ row }) => <div>{row.getValue('currency')}</div>,
+      },
+      {
+        accessorKey: 'fee',
+        header: ({ column }) => (
+          <Button
+            variant="ghost"
+            onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
+            className="hover:bg-transparent px-0"
+          >
+            XRP Fee
+            <ArrowUpDown className="ml-2 h-4 w-4" />
+          </Button>
+        ),
+        cell: ({ row }) => <div>{formatAmount(row.getValue('fee'))}</div>,
+        sortingFn: (rowA, rowB, columnId) => {
+          const valueA = parseFloat(rowA.getValue(columnId)) || 0;
+          const valueB = parseFloat(rowB.getValue(columnId)) || 0;
+          return valueA - valueB;
+        },
+      },
+      {
+        accessorKey: 'fromAddress',
+        header: ({ column }) => (
+          <Button
+            variant="ghost"
+            onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
+            className="hover:bg-transparent px-0"
+          >
+            From Address
+            <ArrowUpDown className="ml-2 h-4 w-4" />
+          </Button>
+        ),
+        cell: ({ row }) => (
+          <a 
+            href={`https://livenet.xrpl.org/accounts/${row.getValue('fromAddress')}`} 
+            target="_blank" 
+            rel="noopener noreferrer"
+            className="text-blue-500 hover:text-blue-700 hover:underline"
+          >
+            {`${String(row.getValue('fromAddress')).substring(0, 8)}...`}
+          </a>
+        ),
+      },
+      {
+        accessorKey: 'toAddress',
+        header: ({ column }) => (
+          <Button
+            variant="ghost"
+            onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
+            className="hover:bg-transparent px-0"
+          >
+            To Address
+            <ArrowUpDown className="ml-2 h-4 w-4" />
+          </Button>
+        ),
+        cell: ({ row }) => (
+          <a 
+            href={`https://livenet.xrpl.org/accounts/${row.getValue('toAddress')}`} 
+            target="_blank" 
+            rel="noopener noreferrer"
+            className="text-blue-500 hover:text-blue-700 hover:underline"
+          >
+            {`${String(row.getValue('toAddress')).substring(0, 8)}...`}
+          </a>
+        ),
+      },
+      {
+        accessorKey: 'timestamp',
+        header: ({ column }) => (
+          <Button
+            variant="ghost"
+            onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
+            className="hover:bg-transparent px-0"
+          >
+            Date
+            <ArrowUpDown className="ml-2 h-4 w-4" />
+          </Button>
+        ),
+        cell: ({ row }) => <div className="text-right">{formatDateTime(row.getValue('timestamp'))}</div>,
+        sortingFn: (rowA, rowB, columnId) => {
+          const dateA = new Date(rowA.getValue(columnId)).getTime();
+          const dateB = new Date(rowB.getValue(columnId)).getTime();
+          return dateA - dateB;
+        },
+      },
+    ],
+    []
+  );
+
+  // Initialize the transactions table with client-side pagination
+  const transactionsTable = useReactTable({
+    data: transactions,
+    columns: transactionsColumns,
+    manualPagination: false, // Use client-side pagination
+    manualSorting: false,    // Use client-side sorting
+    manualFiltering: false,  // Use client-side filtering
+    onSortingChange: setTransactionsSorting,
+    onPaginationChange: (updater) => {
+      const newState = typeof updater === 'function' ? updater({
+        pageIndex: transactionsPageIndex,
+        pageSize: transactionsPageSize,
+      }) : updater;
+      setTransactionsPageIndex(newState.pageIndex);
+      setTransactionsPageSize(newState.pageSize);
+    },
+    onGlobalFilterChange: setTransactionsGlobalFilter,
+    globalFilterFn: transactionsFuzzyFilter,
+    getCoreRowModel: getCoreRowModel(),
+    getFilteredRowModel: getFilteredRowModel(),
+    getSortedRowModel: getSortedRowModel(),
+    getPaginationRowModel: getPaginationRowModel(),
+    state: {
+      sorting: transactionsSorting,
+      globalFilter: transactionsGlobalFilter,
+      pagination: {
+        pageIndex: transactionsPageIndex,
+        pageSize: transactionsPageSize,
+      },
     },
   });
 
@@ -724,29 +1224,7 @@ export default function MinersPage() {
           <StatsChart className="h-64" />
         </Card>
         
-        <Card className="bg-background">
-          <div className="p-4 border-b">
-            <h2 className="text-xl font-bold">Active Open Orders</h2>
-          </div>
-          <div className="p-4">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Order ID</TableHead>
-                  <TableHead>Asset</TableHead>
-                  <TableHead>Amount</TableHead>
-                  <TableHead>Type</TableHead>
-                  <TableHead className="text-right">Created At</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                <TableRow>
-                  <TableCell colSpan={5} className="text-center py-4">No active orders found</TableCell>
-                </TableRow>
-              </TableBody>
-            </Table>
-          </div>
-        </Card>
+        {renderActiveOpenOrders()}
       </div>
 
       <Card className="mt-6">
@@ -760,7 +1238,11 @@ export default function MinersPage() {
                 <Input
                   placeholder="Filter orders..."
                   value={globalFilter ?? ""}
-                  onChange={(e) => setGlobalFilter(e.target.value)}
+                  onChange={(e) => {
+                    setGlobalFilter(e.target.value);
+                    // Reset to first page when filtering
+                    setPageIndex(0);
+                  }}
                   className="pl-8"
                 />
               </div>
@@ -770,17 +1252,18 @@ export default function MinersPage() {
                 <DropdownMenuTrigger asChild>
                   <Button variant="outline" className="ml-2">
                     Side Filter
+                    {selectedSide && `: ${selectedSide}`}
                     <ChevronDown className="ml-2 h-4 w-4" />
                   </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent>
-                  <DropdownMenuItem onClick={() => table.getColumn('side')?.setFilterValue(undefined)}>
+                  <DropdownMenuItem onClick={() => handleSideFilterChange(undefined)}>
                     All
                   </DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => table.getColumn('side')?.setFilterValue('BUY')}>
+                  <DropdownMenuItem onClick={() => handleSideFilterChange('BUY')}>
                     Buy
                   </DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => table.getColumn('side')?.setFilterValue('SELL')}>
+                  <DropdownMenuItem onClick={() => handleSideFilterChange('SELL')}>
                     Sell
                   </DropdownMenuItem>
                 </DropdownMenuContent>
@@ -791,20 +1274,21 @@ export default function MinersPage() {
                 <DropdownMenuTrigger asChild>
                   <Button variant="outline" className="ml-2">
                     Status Filter
+                    {selectedStatus && `: ${selectedStatus}`}
                     <ChevronDown className="ml-2 h-4 w-4" />
                   </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent>
-                  <DropdownMenuItem onClick={() => table.getColumn('status')?.setFilterValue(undefined)}>
+                  <DropdownMenuItem onClick={() => handleStatusFilterChange(undefined)}>
                     All
                   </DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => table.getColumn('status')?.setFilterValue('Filled')}>
+                  <DropdownMenuItem onClick={() => handleStatusFilterChange('Filled')}>
                     Filled
                   </DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => table.getColumn('status')?.setFilterValue('Cancelled')}>
+                  <DropdownMenuItem onClick={() => handleStatusFilterChange('Cancelled')}>
                     Cancelled
                   </DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => table.getColumn('status')?.setFilterValue('Open')}>
+                  <DropdownMenuItem onClick={() => handleStatusFilterChange('Open')}>
                     Open
                   </DropdownMenuItem>
                 </DropdownMenuContent>
@@ -858,7 +1342,7 @@ export default function MinersPage() {
               <TableBody>
                 {ordersLoading ? (
                   <TableRow>
-                    <TableCell colSpan={7} className="h-24 text-center">
+                    <TableCell colSpan={9} className="h-24 text-center">
                       <Loader2 className="h-6 w-6 animate-spin mx-auto" />
                       <span className="mt-2 block text-sm text-muted-foreground">
                         Loading orders...
@@ -880,7 +1364,7 @@ export default function MinersPage() {
                   ))
                 ) : (
                   <TableRow>
-                    <TableCell colSpan={7} className="h-24 text-center">
+                    <TableCell colSpan={9} className="h-24 text-center">
                       No orders found.
                     </TableCell>
                   </TableRow>
@@ -890,28 +1374,250 @@ export default function MinersPage() {
           </div>
           
           <div className="flex items-center justify-between space-x-2 py-4">
-            <div className="text-sm text-muted-foreground">
-              Showing {table.getRowModel().rows.length} of{" "}
-              {ordersPagination.totalCount} orders
+            <div className="flex items-center gap-2">
+              <span className="text-sm text-muted-foreground">
+                {ordersPagination.totalCount > 0 ? (
+                  <>
+                    Showing {((ordersPagination.page - 1) * ordersPagination.limit) + 1} to{" "}
+                    {Math.min(ordersPagination.page * ordersPagination.limit, ordersPagination.totalCount)} of{" "}
+                    {ordersPagination.totalCount} orders
+                  </>
+                ) : (
+                  <>Showing 0 of 0 orders</>
+                )}
+              </span>
+              
+              <Select
+                value={table.getState().pagination.pageSize.toString()}
+                onValueChange={(value) => {
+                  table.setPageSize(Number(value));
+                }}
+              >
+                <SelectTrigger className="h-8 w-[80px]">
+                  <SelectValue placeholder={table.getState().pagination.pageSize.toString()} />
+                </SelectTrigger>
+                <SelectContent side="top">
+                  {[10, 20, 30, 40, 50].map((pageSize) => (
+                    <SelectItem key={pageSize} value={pageSize.toString()}>
+                      {pageSize}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <span className="text-sm text-muted-foreground">per page</span>
             </div>
+            
             <div className="flex items-center space-x-2">
               <Button
                 variant="outline"
                 size="sm"
                 onClick={() => table.previousPage()}
-                disabled={!table.getCanPreviousPage()}
+                disabled={!table.getCanPreviousPage() || ordersLoading}
+                className="px-4"
               >
                 Previous
               </Button>
-              <div className="text-sm">
-                Page {table.getState().pagination.pageIndex + 1} of{" "}
-                {table.getPageCount()}
+              
+              <div className="flex items-center bg-muted px-2 rounded">
+                <span className="text-sm mx-2">
+                  Page {pageIndex + 1} of {table.getPageCount()}
+                </span>
               </div>
+              
               <Button
                 variant="outline"
                 size="sm"
                 onClick={() => table.nextPage()}
-                disabled={!table.getCanNextPage()}
+                disabled={!table.getCanNextPage() || ordersLoading}
+                className="px-4"
+              >
+                Next
+              </Button>
+            </div>
+          </div>
+        </div>
+      </Card>
+      
+      {/* New Deposits and Withdrawals Card */}
+      <Card className="mt-6">
+        <div className="p-6">
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-lg font-semibold">Deposits and Withdrawals</h2>
+            <div className="flex items-center gap-4">
+              {/* Table Filter Input */}
+              <div className="relative w-64">
+                <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
+                <Input
+                  placeholder="Filter transactions..."
+                  value={transactionsGlobalFilter ?? ""}
+                  onChange={(e) => {
+                    setTransactionsGlobalFilter(e.target.value);
+                    setTransactionsPageIndex(0);
+                  }}
+                  className="pl-8"
+                />
+              </div>
+              
+              {/* Type Filter */}
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="outline" className="ml-2">
+                    Type Filter
+                    {selectedType && `: ${selectedType}`}
+                    <ChevronDown className="ml-2 h-4 w-4" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent>
+                  <DropdownMenuItem onClick={() => handleTypeFilterChange(undefined)}>
+                    All
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => handleTypeFilterChange('deposit')}>
+                    Deposits
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => handleTypeFilterChange('withdrawal')}>
+                    Withdrawals
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+              
+              {/* Currency Filter */}
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="outline" className="ml-2">
+                    Currency Filter
+                    {selectedCurrency && `: ${selectedCurrency}`}
+                    <ChevronDown className="ml-2 h-4 w-4" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent>
+                  <DropdownMenuItem onClick={() => handleCurrencyFilterChange(undefined)}>
+                    All
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => handleCurrencyFilterChange('XRP')}>
+                    XRP
+                  </DropdownMenuItem>
+                  {/* Could add other currencies here as needed */}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
+          </div>
+          
+          {transactionsError && (
+            <div className="mb-4 p-3 bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-400 rounded-md flex items-center">
+              <AlertCircle className="h-5 w-5 mr-2 flex-shrink-0" />
+              {transactionsError}
+            </div>
+          )}
+          
+          <div className="rounded-md border">
+            <Table>
+              <TableHeader>
+                {transactionsTable.getHeaderGroups().map((headerGroup) => (
+                  <TableRow key={headerGroup.id}>
+                    {headerGroup.headers.map((header) => (
+                      <TableHead key={header.id}>
+                        {header.isPlaceholder
+                          ? null
+                          : flexRender(
+                              header.column.columnDef.header,
+                              header.getContext()
+                            )}
+                      </TableHead>
+                    ))}
+                  </TableRow>
+                ))}
+              </TableHeader>
+              <TableBody>
+                {transactionsLoading ? (
+                  <TableRow>
+                    <TableCell colSpan={transactionsColumns.length} className="h-24 text-center">
+                      <Loader2 className="h-6 w-6 animate-spin mx-auto" />
+                      <span className="mt-2 block text-sm text-muted-foreground">
+                        Loading transactions...
+                      </span>
+                    </TableCell>
+                  </TableRow>
+                ) : transactionsTable.getRowModel().rows?.length ? (
+                  transactionsTable.getRowModel().rows.map((row) => (
+                    <TableRow
+                      key={row.id}
+                      data-state={row.getIsSelected() && "selected"}
+                    >
+                      {row.getVisibleCells().map((cell) => (
+                        <TableCell key={cell.id}>
+                          {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                        </TableCell>
+                      ))}
+                    </TableRow>
+                  ))
+                ) : (
+                  <TableRow>
+                    <TableCell colSpan={transactionsColumns.length} className="h-24 text-center">
+                      No transactions found.
+                    </TableCell>
+                  </TableRow>
+                )}
+              </TableBody>
+            </Table>
+          </div>
+          
+          <div className="flex items-center justify-between space-x-2 py-4">
+            <div className="flex items-center gap-2">
+              <span className="text-sm text-muted-foreground">
+                {transactionsPagination.totalCount > 0 ? (
+                  <>
+                    Showing {transactionsPageIndex * transactionsPageSize + 1} to{" "}
+                    {Math.min((transactionsPageIndex + 1) * transactionsPageSize, transactions.length)} of{" "}
+                    {transactionsPagination.totalCount} transactions
+                  </>
+                ) : (
+                  <>Showing 0 of 0 transactions</>
+                )}
+              </span>
+              
+              <Select
+                value={transactionsTable.getState().pagination.pageSize.toString()}
+                onValueChange={(value) => {
+                  transactionsTable.setPageSize(Number(value));
+                }}
+              >
+                <SelectTrigger className="h-8 w-[80px]">
+                  <SelectValue placeholder={transactionsTable.getState().pagination.pageSize.toString()} />
+                </SelectTrigger>
+                <SelectContent side="top">
+                  {[10, 20, 30, 40, 50].map((pageSize) => (
+                    <SelectItem key={pageSize} value={pageSize.toString()}>
+                      {pageSize}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <span className="text-sm text-muted-foreground">per page</span>
+            </div>
+            
+            <div className="flex items-center space-x-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => transactionsTable.previousPage()}
+                disabled={!transactionsTable.getCanPreviousPage() || transactionsLoading}
+                className="px-4"
+              >
+                Previous
+              </Button>
+              
+              <div className="flex items-center bg-muted px-2 rounded">
+                <span className="text-sm mx-2">
+                  Page {transactionsPageIndex + 1} of {transactionsTable.getPageCount() || 1}
+                </span>
+              </div>
+              
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => transactionsTable.nextPage()}
+                disabled={!transactionsTable.getCanNextPage() || transactionsLoading}
+                className="px-4"
               >
                 Next
               </Button>
