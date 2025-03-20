@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { getCollectionInfo } from '@/lib/mongodb';
+import { getCollectionInfo } from '@/lib/db';
 
 /**
  * API route to get MongoDB collection information

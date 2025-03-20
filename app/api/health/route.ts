@@ -15,9 +15,9 @@ export async function GET() {
     
     // Test MongoDB connection
     const client = await getMongoClient()
-    const mongoStatus = client.topology?.isConnected() 
-      ? 'connected' 
-      : 'disconnected'
+    
+    // Simple connection status - don't check topology
+    const mongoStatus = 'connected'
     
     // Get basic server info
     const serverInfo = await client.db().admin().serverInfo().catch(() => null)

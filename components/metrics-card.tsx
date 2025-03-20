@@ -6,16 +6,11 @@ import { cn } from "@/lib/utils"
 interface MetricsCardProps {
   title: string
   value: string
-  change: {
-    value: string
-    percentage: string
-    isPositive: boolean
-  }
   chart?: React.ReactNode
   className?: string
 }
 
-export function MetricsCard({ title, value, change, chart, className }: MetricsCardProps) {
+export function MetricsCard({ title, value, chart, className }: MetricsCardProps) {
   return (
     <Card className={cn("p-4 bg-background", className)}>
       <div className="flex items-center justify-between mb-4">
@@ -25,12 +20,6 @@ export function MetricsCard({ title, value, change, chart, className }: MetricsC
       <div className="flex items-end justify-between">
         <div>
           <p className="text-2xl font-bold">{value}</p>
-          <div className="flex items-center gap-1 mt-1">
-            <span className="text-sm">+{change.value}</span>
-            <span className={`text-sm ${change.isPositive ? "text-green-500" : "text-red-500"}`}>
-              {change.percentage}
-            </span>
-          </div>
         </div>
         {chart}
       </div>
