@@ -34,9 +34,9 @@ export async function GET(request: Request) {
       operation: 'count'
     })
     
-    const totalPages = Math.ceil(totalCount / limit)
+    const totalPages = Math.ceil((totalCount as number) / limit)
     
-    console.log(`Retrieved ${transactions.length} transactions (page ${page}/${totalPages})`)
+    console.log(`Retrieved ${(transactions as any[]).length} transactions (page ${page}/${totalPages})`)
     
     return NextResponse.json({
       success: true,
@@ -109,7 +109,7 @@ export async function POST(request: Request) {
     
     return NextResponse.json({
       success: true,
-      data: { _id: result.insertedId, ...transaction }
+      data: { _id: (result as any).insertedId, ...transaction }
     }, { status: 201 })
   } catch (error) {
     console.error('Error creating transaction:', error)
