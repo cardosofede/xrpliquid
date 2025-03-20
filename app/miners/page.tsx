@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, useMemo } from "react"
+import { useState, useEffect, useMemo, useRef } from "react"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -23,7 +23,8 @@ import {
   Loader2,
   ArrowUpDown,
   ArrowDown,
-  ArrowUp
+  ArrowUp,
+  RefreshCw
 } from "lucide-react"
 import {
   Select,
@@ -68,6 +69,7 @@ interface Order {
   date: string;
   fee: string;
   rawData: any;
+  isNew?: boolean; // Flag to indicate new items
 }
 
 // Transaction interface for deposits and withdrawals
@@ -84,6 +86,7 @@ interface Transaction {
   hash: string;
   ledgerIndex: number;
   rawData: any;
+  isNew?: boolean; // Flag to indicate new items
 }
 
 // Pagination interface
@@ -184,15 +187,23 @@ export default function MinersPage() {
   const [transactionsPageSize, setTransactionsPageSize] = useState(10);
   const [transactionsGlobalFilter, setTransactionsGlobalFilter] = useState('');
 
+  const [autoRefresh, setAutoRefresh] = useState<boolean>(true);
+  const refreshIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const [refreshing, setRefreshing] = useState<boolean>(false);
+  const [lastRefreshTime, setLastRefreshTime] = useState<Date>(new Date());
+
   // Load user data based on the search value
-  const loadUserData = async (userId: string) => {
+  const loadUserData = async (userId: string, silent: boolean = false) => {
     if (!userId.trim()) {
       setError("Please enter a user ID");
       return;
     }
     
-    setLoading(true);
+    if (!silent) {
+      setLoading(true);
+    }
     setError(null);
+    
     try {
       // Use the dashboard stats API since it already works
       const response = await fetch(`/api/dashboard/stats?userId=${encodeURIComponent(userId)}`);
@@ -202,39 +213,43 @@ export default function MinersPage() {
       }
       
       const data = await response.json();
-      console.log('Dashboard stats response:', data);
       
       // Set transaction count from the stats response
       setTransactionCount(data.stats?.transactionCount || 0);
-      setDisplayedUser(userId);
       
-      // Reset pagination and filters before loading orders
-      setPageIndex(0);
-      setSelectedPair("ALL");
-      setSelectedSide(undefined);
-      setSelectedStatus(undefined);
-      
-      // Reset transactions pagination and filters
-      setTransactionsPageIndex(0);
-      setSelectedType(undefined);
-      setSelectedCurrency(undefined);
-      
-      // Reset open orders pagination
-      setOpenOrdersPage(1);
-      
-      // Load order history for this user
-      await loadOrderHistory(userId, 1, "ALL", undefined, undefined);
-      
-      // Load open orders for this user (page 1)
-      await loadOpenOrders(userId, 1);
-      
-      // Load deposits and withdrawals for this user
-      await loadTransactions(userId, 1);
+      if (!silent) {
+        setDisplayedUser(userId);
+        
+        // Reset pagination and filters before loading orders
+        setPageIndex(0);
+        setSelectedPair("ALL");
+        setSelectedSide(undefined);
+        setSelectedStatus(undefined);
+        
+        // Reset transactions pagination and filters
+        setTransactionsPageIndex(0);
+        setSelectedType(undefined);
+        setSelectedCurrency(undefined);
+        
+        // Reset open orders pagination
+        setOpenOrdersPage(1);
+        
+        // Load order history for this user
+        await loadOrderHistory(userId, 1, "ALL", undefined, undefined);
+        
+        // Load open orders for this user (page 1)
+        await loadOpenOrders(userId, 1);
+        
+        // Load deposits and withdrawals for this user
+        await loadTransactions(userId, 1);
+      }
     } catch (error) {
       console.error('Error fetching user data:', error);
       setError(error instanceof Error ? error.message : 'An error occurred while loading data');
     } finally {
-      setLoading(false);
+      if (!silent) {
+        setLoading(false);
+      }
     }
   };
   
@@ -246,11 +261,14 @@ export default function MinersPage() {
     side?: string,
     status?: string,
     sortField?: string,
-    sortDirection?: string
+    sortDirection?: string,
+    silent: boolean = false
   ) => {
     if (!userId) return;
     
-    setOrdersLoading(true);
+    if (!silent) {
+      setOrdersLoading(true);
+    }
     setOrdersError(null);
     
     try {
@@ -288,11 +306,42 @@ export default function MinersPage() {
       }
       
       const data = await response.json();
-      console.log('Order history response:', data);
       
       if (data.success) {
-        // Store all orders
-        setOrders(data.data || []);
+        // Check for new orders
+        if (silent && orders.length > 0) {
+          // Get existing order IDs
+          const existingIds = new Set(orders.map(order => order.orderId));
+          
+          // Find new orders
+          const newOrders = data.data.filter((order: Order) => !existingIds.has(order.orderId));
+          
+          if (newOrders.length > 0) {
+            // Mark new orders
+            const markedNewOrders = newOrders.map((order: Order) => ({
+              ...order,
+              isNew: true
+            }));
+            
+            // Merge orders with existing ones
+            const updatedOrders = [...markedNewOrders, ...orders];
+            
+            // Remove isNew flag after 3 seconds
+            setTimeout(() => {
+              setOrders(prevOrders => 
+                prevOrders.map(order => ({
+                  ...order,
+                  isNew: false
+                }))
+              );
+            }, 3000);
+            
+            setOrders(updatedOrders);
+          }
+        } else {
+          // Store all orders normally on initial or explicit load
+          setOrders(data.data || []);
+        }
         
         // Calculate total pages based on total count and page size (for display only)
         const totalCount = data.pagination?.totalCount || 0;
@@ -309,25 +358,33 @@ export default function MinersPage() {
           totalCount: totalCount
         });
         
-        // Reset to first page
-        setPageIndex(0);
+        if (!silent) {
+          // Reset to first page
+          setPageIndex(0);
+        }
       } else {
         throw new Error(data.error || 'Failed to load order history');
       }
     } catch (error) {
       console.error('Error fetching order history:', error);
       setOrdersError(error instanceof Error ? error.message : 'An error occurred while loading order history');
-      setOrders([]);
+      if (!silent) {
+        setOrders([]);
+      }
     } finally {
-      setOrdersLoading(false);
+      if (!silent) {
+        setOrdersLoading(false);
+      }
     }
   };
   
   // Simple function to load open orders with pagination
-  const loadOpenOrders = async (userId: string, page: number = 1) => {
+  const loadOpenOrders = async (userId: string, page: number = 1, silent: boolean = false) => {
     if (!userId) return;
     
-    setOpenOrdersLoading(true);
+    if (!silent) {
+      setOpenOrdersLoading(true);
+    }
     setOpenOrdersError(null);
     
     try {
@@ -343,26 +400,65 @@ export default function MinersPage() {
       }
       
       const data = await response.json();
-      console.log(`Open orders response: Found ${data.data?.length || 0} orders (page ${data.pagination?.page || 1} of ${data.pagination?.totalPages || 1})`);
       
       if (data.success) {
-        setOpenOrders(data.data || []);
+        if (silent && openOrders.length > 0) {
+          // Get existing order hashes
+          const existingHashes = new Set(openOrders.map(order => order.hash));
+          
+          // Find new open orders
+          const newOpenOrders = data.data.filter((order: any) => !existingHashes.has(order.hash));
+          
+          if (newOpenOrders.length > 0) {
+            // Mark new open orders
+            const markedNewOrders = newOpenOrders.map((order: any) => ({
+              ...order,
+              isNew: true
+            }));
+            
+            // Merge with existing open orders
+            const updatedOpenOrders = [...markedNewOrders, ...openOrders];
+            
+            // Remove isNew flag after 3 seconds
+            setTimeout(() => {
+              setOpenOrders(prevOrders => 
+                prevOrders.map(order => ({
+                  ...order,
+                  isNew: false
+                }))
+              );
+            }, 3000);
+            
+            setOpenOrders(updatedOpenOrders);
+          }
+        } else {
+          // Store open orders normally
+          setOpenOrders(data.data || []);
+        }
+        
         setOpenOrdersPagination({
           page: data.pagination?.page || 1,
           limit: data.pagination?.limit || 15,
           totalPages: data.pagination?.totalPages || 1,
           totalCount: data.pagination?.totalCount || 0
         });
-        setOpenOrdersPage(data.pagination?.page || 1);
+        
+        if (!silent) {
+          setOpenOrdersPage(data.pagination?.page || 1);
+        }
       } else {
         throw new Error(data.error || 'Failed to load open orders');
       }
     } catch (error) {
       console.error('Error fetching open orders:', error);
       setOpenOrdersError(error instanceof Error ? error.message : 'An error occurred while loading open orders');
-      setOpenOrders([]);
+      if (!silent) {
+        setOpenOrders([]);
+      }
     } finally {
-      setOpenOrdersLoading(false);
+      if (!silent) {
+        setOpenOrdersLoading(false);
+      }
     }
   };
   
@@ -371,11 +467,14 @@ export default function MinersPage() {
     userId: string, 
     page: number = 1, 
     type?: string,
-    currency?: string
+    currency?: string,
+    silent: boolean = false
   ) => {
     if (!userId) return;
     
-    setTransactionsLoading(true);
+    if (!silent) {
+      setTransactionsLoading(true);
+    }
     setTransactionsError(null);
     
     try {
@@ -403,11 +502,41 @@ export default function MinersPage() {
       }
       
       const data = await response.json();
-      console.log('Transactions response:', data);
       
       if (data.success) {
-        // Store transactions
-        setTransactions(data.data || []);
+        if (silent && transactions.length > 0) {
+          // Get existing transaction IDs
+          const existingIds = new Set(transactions.map(tx => tx.id));
+          
+          // Find new transactions
+          const newTransactions = data.data.filter((tx: Transaction) => !existingIds.has(tx.id));
+          
+          if (newTransactions.length > 0) {
+            // Mark new transactions
+            const markedNewTransactions = newTransactions.map((tx: Transaction) => ({
+              ...tx,
+              isNew: true
+            }));
+            
+            // Merge with existing transactions
+            const updatedTransactions = [...markedNewTransactions, ...transactions];
+            
+            // Remove isNew flag after 3 seconds
+            setTimeout(() => {
+              setTransactions(prevTransactions => 
+                prevTransactions.map(tx => ({
+                  ...tx,
+                  isNew: false
+                }))
+              );
+            }, 3000);
+            
+            setTransactions(updatedTransactions);
+          }
+        } else {
+          // Store transactions normally
+          setTransactions(data.data || []);
+        }
         
         // Calculate total pages based on total count and page size
         const totalCount = data.pagination?.totalCount || 0;
@@ -422,45 +551,67 @@ export default function MinersPage() {
           totalCount: totalCount
         });
         
-        // Reset to first page
-        setTransactionsPageIndex(0);
+        if (!silent) {
+          // Reset to first page
+          setTransactionsPageIndex(0);
+        }
       } else {
         throw new Error(data.error || 'Failed to load transactions');
       }
     } catch (error) {
       console.error('Error fetching transactions:', error);
       setTransactionsError(error instanceof Error ? error.message : 'An error occurred while loading transactions');
-      setTransactions([]);
+      if (!silent) {
+        setTransactions([]);
+      }
     } finally {
-      setTransactionsLoading(false);
+      if (!silent) {
+        setTransactionsLoading(false);
+      }
     }
   };
   
-  // New effect for only server-side filtering and sorting, not pagination
-  useEffect(() => {
-    if (displayedUser) {
+  // Handle auto-refresh toggle
+  const toggleAutoRefresh = () => {
+    setAutoRefresh(prev => !prev);
+  };
+
+  // Manual refresh function
+  const handleManualRefresh = async () => {
+    if (refreshing || !displayedUser) return;
+    
+    setRefreshing(true);
+    
+    try {
       // Convert table sorting to API sorting
-      let sortField: string | undefined;
-      let sortDirection: string | undefined;
+      const sortField = sorting.length > 0 ? sorting[0].id : undefined;
+      const sortDirection = sorting.length > 0 ? (sorting[0].desc ? 'desc' : 'asc') : undefined;
       
-      if (sorting.length > 0) {
-        sortField = sorting[0].id;
-        sortDirection = sorting[0].desc ? 'desc' : 'asc';
-      }
+      // Load data silently (without loading indicators)
+      await Promise.all([
+        loadOrderHistory(
+          displayedUser, 
+          ordersPagination.page, 
+          selectedPair, 
+          selectedSide, 
+          selectedStatus,
+          sortField,
+          sortDirection,
+          true // silent mode
+        ),
+        loadOpenOrders(displayedUser, openOrdersPage, true),
+        loadTransactions(displayedUser, transactionsPagination.page, selectedType, selectedCurrency, true),
+        loadUserData(displayedUser, true)
+      ]);
       
-      // Always load page 1 with server-side filtering/sorting
-      loadOrderHistory(
-        displayedUser, 
-        1, // Always page 1 since we load all data
-        selectedPair, 
-        selectedSide, 
-        selectedStatus,
-        sortField,
-        sortDirection
-      );
+      setLastRefreshTime(new Date());
+    } catch (error) {
+      console.error('Error during refresh:', error);
+    } finally {
+      setRefreshing(false);
     }
-  }, [displayedUser, selectedPair, selectedSide, selectedStatus, sorting]);
-  
+  };
+
   // Handle trading pair filter change
   const handleTradingPairChange = (value: string) => {
     setSelectedPair(value);
@@ -510,6 +661,12 @@ export default function MinersPage() {
       totalPages: 1,
       totalCount: 0
     });
+    
+    // Clear auto-refresh interval when user is cleared
+    if (refreshIntervalRef.current) {
+      clearInterval(refreshIntervalRef.current);
+      refreshIntervalRef.current = null;
+    }
   };
 
   // Initial data load
@@ -834,7 +991,10 @@ export default function MinersPage() {
                 </TableRow>
               ) : openOrders.length > 0 ? (
                 openOrders.map((order) => (
-                  <TableRow key={order.hash}>
+                  <TableRow 
+                    key={order.hash}
+                    className={order.isNew ? "bg-green-50 dark:bg-green-900/20 transition-colors duration-1000" : ""}
+                  >
                     <TableCell>
                       <a 
                         href={`https://livenet.xrpl.org/transactions/${order.hash}`} 
@@ -1131,13 +1291,39 @@ export default function MinersPage() {
     },
   });
 
+  // Setup auto-refresh interval
+  useEffect(() => {
+    if (autoRefresh && displayedUser) {
+      // Clear any existing interval
+      if (refreshIntervalRef.current) {
+        clearInterval(refreshIntervalRef.current);
+      }
+      
+      // Set up new interval
+      refreshIntervalRef.current = setInterval(() => {
+        handleManualRefresh();
+      }, 4000);
+    } else if (refreshIntervalRef.current) {
+      // Clear interval if auto-refresh is disabled
+      clearInterval(refreshIntervalRef.current);
+      refreshIntervalRef.current = null;
+    }
+    
+    // Cleanup on unmount
+    return () => {
+      if (refreshIntervalRef.current) {
+        clearInterval(refreshIntervalRef.current);
+      }
+    };
+  }, [autoRefresh, displayedUser]);
+
   return (
     <>
       <div className="mb-6 flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold">Miner Details</h1>
-          {displayedUser && (
-            <div className="flex items-center gap-2 mt-1">
+          <div className="flex items-center gap-2 mt-1">
+            {displayedUser && (
               <div className="px-3 py-1 bg-slate-100 dark:bg-slate-800 rounded-md text-sm flex items-center gap-1">
                 {displayedUser}
                 <button 
@@ -1148,8 +1334,30 @@ export default function MinersPage() {
                   <X className="h-3.5 w-3.5" />
                 </button>
               </div>
-            </div>
-          )}
+            )}
+            <Button 
+              variant={autoRefresh ? "outline" : "ghost"} 
+              size="sm" 
+              onClick={toggleAutoRefresh}
+              className={`flex items-center gap-1 ${displayedUser ? "" : "opacity-50 pointer-events-none"}`}
+              disabled={!displayedUser}
+            >
+              <span className={`h-2 w-2 rounded-full ${autoRefresh ? "bg-green-500" : "bg-gray-400"}`}></span>
+              {autoRefresh ? "Auto-refresh On" : "Auto-refresh Off"}
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={handleManualRefresh}
+              disabled={refreshing || !displayedUser}
+              className={displayedUser ? "" : "opacity-50 pointer-events-none"}
+            >
+              <RefreshCw className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`} />
+              <span className="ml-1 text-xs">
+                {lastRefreshTime && `Last: ${lastRefreshTime.toLocaleTimeString()}`}
+              </span>
+            </Button>
+          </div>
         </div>
         <div className="flex gap-2">
           <div className="relative w-64">
@@ -1354,6 +1562,7 @@ export default function MinersPage() {
                     <TableRow
                       key={row.id}
                       data-state={row.getIsSelected() && "selected"}
+                      className={row.original.isNew ? "bg-green-50 dark:bg-green-900/20 transition-colors duration-1000" : ""}
                     >
                       {row.getVisibleCells().map((cell) => (
                         <TableCell key={cell.id}>
@@ -1542,6 +1751,7 @@ export default function MinersPage() {
                     <TableRow
                       key={row.id}
                       data-state={row.getIsSelected() && "selected"}
+                      className={row.original.isNew ? "bg-green-50 dark:bg-green-900/20 transition-colors duration-1000" : ""}
                     >
                       {row.getVisibleCells().map((cell) => (
                         <TableCell key={cell.id}>
